@@ -1,0 +1,14 @@
+{
+  "name": "win-downloader",
+  "version": "0.1.0",
+  "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node test/test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
