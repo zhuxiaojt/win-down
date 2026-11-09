@@ -1,6 +1,6 @@
 {
   "name": "win-down",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
   "main": "cjs/index.cjs",
   "types": "cjs/index.d.cts",

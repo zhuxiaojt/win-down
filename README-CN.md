@@ -21,7 +21,7 @@ Windows 平台多线程下载器，核心引擎使用 Rust + WinHTTP 实现，�
 
 ## 安装
 
-需要 Node.js >= 18与 Windows 环境。
+需要 Node.js >= 18 与 Windows 环境。
 
 ```bash
 npm install win-down
