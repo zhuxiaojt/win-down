@@ -19,17 +19,13 @@ Windows 平台多线程下载器，核心引擎使用 Rust + WinHTTP 实现，�
 - **代理支持**：默认使用系统代理，也可显式指定
 - **事件驱动**：进度、状态、降级、统计、日志全部通过 EventEmitter 推送
 
-## 安装与构建
+## 安装
 
-需要 Node.js >= 18、Rust toolchain（`cargo`）与 Windows 环境。
+需要 Node.js >= 18与 Windows 环境。
 
 ```bash
-npm install     # 安装开发依赖
-npm run build   # 编译 CJS/ESM 产物 + cargo 构建原生模块
-npm test        # 运行测试
+npm install win-down
 ```
-
-`package.json` 已配置条件导出，ESM（`import`）与 CJS（`require`）均直接可用。
 
 ## 快速开始
 

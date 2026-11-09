@@ -19,17 +19,13 @@ A multi-threaded downloader for Windows. The core engine is implemented in Rust 
 - **Proxy support**: uses the system proxy by default, or an explicit one
 - **Event-driven**: progress, state, degradation, stats, and log events are all pushed via EventEmitter
 
-## Install & Build
+## Install
 
-Requires Node.js >= 18, a Rust toolchain (`cargo`), and Windows.
+Requires Node.js >= 18, and Windows.
 
 ```bash
-npm install     # install dev dependencies
-npm run build   # compile CJS/ESM output + cargo build of the native module
-npm test        # run tests
+npm install win-down
 ```
-
-Conditional exports are configured in `package.json`, so both ESM (`import`) and CJS (`require`) work out of the box.
 
 ## Quick Start
 
