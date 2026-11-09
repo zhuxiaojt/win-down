@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zhuxiaojt/win-down.git"
+    "url": "git+https://github.com/zhuxiaojt/win-down.git"
   },
   "files": [
     "cjs/index.cjs",
@@ -21,9 +21,14 @@
   ],
   "exports": {
     ".": {
-      "import": "./esm/index.mjs",
-      "require": "./cjs/index.cjs",
-      "types": "./cjs/index.d.cts"
+      "import": {
+        "types": "./esm/index.d.mts",
+        "default": "./esm/index.mjs"
+      },
+      "require": {
+        "types": "./cjs/index.d.cts",
+        "default": "./cjs/index.cjs"
+      }
     }
   },
   "scripts": {
@@ -37,7 +42,9 @@
   "engines": {
     "node": ">=18"
   },
-  "os": ["win32"],
+  "os": [
+    "win32"
+  ],
   "devDependencies": {
     "@types/node": "^20",
     "typescript": "^5"
