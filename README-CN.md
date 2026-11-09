@@ -1,6 +1,6 @@
 # win-down
 
-[English](README.md) | **简体中文**
+[English](https://github.com/zhuxiaojt/win-down/blob/main/README.md) | **简体中文**
 
 Windows 平台多线程下载器，核心引擎使用 Rust + WinHTTP 实现，通过 Node-API (N-API) 暴露给 Node.js，提供完整的 TypeScript 类型支持。
 
@@ -65,13 +65,13 @@ const { Downloader } = require('win-down');
 
 ## 文档
 
-详细 API 说明见 [`docs/cn/`](docs/cn/)：
+详细 API 说明见 [`docs/cn/`](https://github.com/zhuxiaojt/win-down/blob/main/docs/cn/)：
 
 | 文档 | 内容 |
 | --- | --- |
-| [Downloader API](docs/cn/downloader.md) | 下载器实例、全部配置项、全局统计、事件、资源策略 |
-| [DownloadTask API](docs/cn/task.md) | 任务配置、属性、方法、事件、进度事件字段、断点续传 |
-| [错误码与降级原因](docs/cn/errors.md) | DownloadError 错误码、DegradeReason、任务状态机 |
+| [Downloader API](https://github.com/zhuxiaojt/win-down/blob/main/docs/cn/downloader.md) | 下载器实例、全部配置项、全局统计、事件、资源策略 |
+| [DownloadTask API](https://github.com/zhuxiaojt/win-down/blob/main/docs/cn/task.md) | 任务配置、属性、方法、事件、进度事件字段、断点续传 |
+| [错误码与降级原因](https://github.com/zhuxiaojt/win-down/blob/main/docs/cn/errors.md) | DownloadError 错误码、DegradeReason、任务状态机 |
 
 ## 架构
 

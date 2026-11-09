@@ -1,6 +1,6 @@
 # win-down
 
-**English** | [简体中文](README-CN.md)
+**English** | [简体中文](https://github.com/zhuxiaojt/win-down/blob/main/README-CN.md)
 
 A multi-threaded downloader for Windows. The core engine is implemented in Rust + WinHTTP and exposed to Node.js via Node-API (N-API), with full TypeScript type support.
 
@@ -65,13 +65,13 @@ const { Downloader } = require('win-down');
 
 ## Documentation
 
-For detailed API documentation, see [`docs/en/`](docs/en/):
+For detailed API documentation, see [`docs/en/`](https://github.com/zhuxiaojt/win-down/blob/main/docs/en/):
 
 | Document | Contents |
 | --- | --- |
-| [Downloader API](docs/en/downloader.md) | Downloader instance, all options, global stats, events, resource policies |
-| [DownloadTask API](docs/en/task.md) | Task options, properties, methods, events, progress event fields, resume |
-| [Error codes & degradation](docs/en/errors.md) | DownloadError codes, DegradeReason, task state machine |
+| [Downloader API](https://github.com/zhuxiaojt/win-down/blob/main/docs/en/downloader.md) | Downloader instance, all options, global stats, events, resource policies |
+| [DownloadTask API](https://github.com/zhuxiaojt/win-down/blob/main/docs/en/task.md) | Task options, properties, methods, events, progress event fields, resume |
+| [Error codes & degradation](https://github.com/zhuxiaojt/win-down/blob/main/docs/en/errors.md) | DownloadError codes, DegradeReason, task state machine |
 
 ## Architecture
 

@@ -4,6 +4,21 @@
   "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
   "main": "cjs/index.cjs",
   "types": "cjs/index.d.cts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhuxiaojt/win-down.git"
+  },
+  "files": [
+    "cjs/index.cjs",
+    "cjs/index.d.cts",
+    "esm/index.mjs",
+    "esm/index.d.mts",
+    "native/win_down.node",
+    "LICENSE",
+    "README.md",
+    "README-CN.md"
+  ],
   "exports": {
     ".": {
       "import": "./esm/index.mjs",
@@ -22,6 +37,7 @@
   "engines": {
     "node": ">=18"
   },
+  "os": ["win32"],
   "devDependencies": {
     "@types/node": "^20",
     "typescript": "^5"
