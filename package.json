@@ -2,13 +2,28 @@
   "name": "win-downloader",
   "version": "0.1.0",
   "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "main": "cjs/index.cjs",
+  "types": "cjs/index.d.cts",
+  "exports": {
+    ".": {
+      "import": "./esm/index.mjs",
+      "require": "./cjs/index.cjs",
+      "types": "./cjs/index.d.cts"
+    }
+  },
   "scripts": {
-    "build": "node scripts/build.js",
+    "build:ts:cjs": "tsc -p tsconfig.cjs.json",
+    "build:ts:esm": "tsc -p tsconfig.esm.json",
+    "build:ts": "npm run build:ts:cjs && npm run build:ts:esm",
+    "build:native": "node scripts/build.js",
+    "build": "npm run build:ts && npm run build:native",
     "test": "node test/test.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
   }
 }

@@ -5,3 +5,5 @@ native/target/
 *.pdb
 *.ilk
 test/tmp/
+cjs/
+esm/

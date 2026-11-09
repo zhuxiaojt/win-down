@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert');
 const { startServer, makeBody, ETAG } = require('./server');
-const { Downloader, DownloadError } = require('../lib/index.js');
+const { Downloader, DownloadError } = require('../cjs/index.cjs');
 
 const TMP = path.join(__dirname, 'tmp');
 const MiB = 1024 * 1024;
