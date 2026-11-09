@@ -19,7 +19,7 @@ if (result.status !== 0) {
   process.exit(result.status || 1);
 }
 
-const dll = path.join(root, 'native', 'target', 'release', 'win_downloader.dll');
-const out = path.join(root, 'native', 'win_downloader.node');
+const dll = path.join(root, 'native', 'target', 'release', 'win_down.dll');
+const out = path.join(root, 'native', 'win_down.node');
 fs.copyFileSync(dll, out);
 console.log(`built ${out}`);

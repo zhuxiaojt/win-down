@@ -13,7 +13,7 @@ pub(super) fn meta_path(dest: &Path) -> PathBuf {
 pub(super) fn save_meta(dest: &Path, total: i64, etag: &str, last_modified: &str, segs: &[Segment]) {
     let path = meta_path(dest);
     let mut text = String::new();
-    text.push_str("# win-downloader resume v1\n");
+    text.push_str("# win-down resume v1\n");
     text.push_str(&format!("total\t{}\n", total));
     text.push_str(&format!("etag\t{}\n", etag));
     text.push_str(&format!("last-modified\t{}\n", last_modified));

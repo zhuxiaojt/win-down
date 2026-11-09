@@ -1,11 +1,11 @@
 [package]
-name = "win-downloader-native"
+name = "win-down-native"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-name = "win_downloader"
+name = "win_down"
 crate-type = ["cdylib"]
 
 [dependencies]

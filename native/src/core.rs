@@ -146,7 +146,7 @@ impl Default for Options {
             max_redirects: 10,
             verify_tls: true,
             proxy: "system".to_string(),
-            user_agent: "win-downloader/1.0".to_string(),
+            user_agent: "win-down/1.0".to_string(),
             headers: Vec::new(),
             resume: false,
             preallocate: true,

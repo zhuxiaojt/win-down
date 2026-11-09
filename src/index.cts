@@ -231,8 +231,8 @@ let nativeModule: { NativeDownloader: NativeDownloader } | null = null;
 function loadNative(): { NativeDownloader: NativeDownloader } {
   if (nativeModule) return nativeModule;
   const candidates = [
-    path.join(__dirname, '..', 'native', 'win_downloader.node'),
-    path.join(__dirname, '..', 'win_downloader.node'),
+    path.join(__dirname, '..', 'native', 'win_down.node'),
+    path.join(__dirname, '..', 'win_down.node'),
   ];
   let lastError: Error | null = null;
   for (const file of candidates) {

@@ -1,5 +1,5 @@
 {
-  "name": "win-downloader",
+  "name": "win-down",
   "version": "0.1.0",
   "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
   "main": "cjs/index.cjs",
