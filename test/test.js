@@ -138,6 +138,44 @@ async function main() {
     }
   });
 
+  await test('large file (40MB) downloads in one run with checksum', async () => {
+    const size = 40 * MiB;
+    const body = makeBody(size);
+    const dl = new Downloader({
+      maxConcurrency: 8,
+      segmentSize: 2 * MiB,
+      smallFileThreshold: 1024,
+      maxSegmentsPerTask: 32,
+    });
+    const percents = [];
+    const maxActive = { value: 0 };
+    try {
+      const task = dl.addTask({
+        url: `${base}/file?size=${size}`,
+        destination: dest('large-40mb.bin'),
+        checksum: { algorithm: 'sha256', value: sha256(body) },
+      });
+      dl.on('progress', (_t, event) => {
+        if (event.activeConnections > maxActive.value) {
+          maxActive.value = event.activeConnections;
+        }
+      });
+      task.on('progress', (event) => percents.push(event.percent));
+      const event = await withTimeout(task.wait(), 60000, '40MB download');
+      assert.strictEqual(event.state, 'completed');
+      assert.strictEqual(task.checksumVerified, true);
+      assert.strictEqual(event.checksumVerified, true);
+      assert.strictEqual(task.totalBytes, size);
+      assertSame(fs.readFileSync(dest('large-40mb.bin')), body, '40MB content');
+      assert.ok(maxActive.value > 1, `expected concurrent connections > 1, got ${maxActive.value}`);
+      assert.ok(percents.length > 0, 'expected progress events');
+      assert.ok(percents.some((p) => p === 100), 'expected final percent 100');
+      assert.deepStrictEqual(filesInTmp(), ['large-40mb.bin']);
+    } finally {
+      dl.shutdown();
+    }
+  });
+
   await test('range-ignored server degrades to single connection', async () => {
     const size = 2 * MiB;
     const body = makeBody(size);

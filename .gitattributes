@@ -1,0 +1,4 @@
+* text=auto eol=lf
+README.md linguist-documentation
+README-CN.md linguist-documentation
+docs/** linguist-documentation

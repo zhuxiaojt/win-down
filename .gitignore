@@ -7,3 +7,11 @@ native/target/
 test/tmp/
 cjs/
 esm/
+.vscode/
+.trae/
+.trae-cn/
+.idea/
+desktop.ini
+.DS_Store
+Thumbs.db
+.screenshots/
