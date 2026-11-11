@@ -1,3 +1,5 @@
+// ---------------- core types & policies ----------------
+
 pub type HeaderList = Vec<(String, String)>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -99,6 +101,8 @@ pub enum Mode {
     Single,
     UnknownLength,
 }
+
+// ---------------- options ----------------
 
 #[derive(Clone)]
 pub struct Options {
@@ -207,6 +211,8 @@ pub struct ProbeResult {
     pub error: String,
 }
 
+// ---------------- events ----------------
+
 pub const EV_PROGRESS: u8 = 0;
 pub const EV_STATE: u8 = 1;
 pub const EV_DEGRADED: u8 = 2;
@@ -288,6 +294,8 @@ impl Event {
         }
     }
 }
+
+// ---------------- helpers ----------------
 
 pub fn now_ms() -> i64 {
     unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() as i64 }

@@ -207,7 +207,6 @@ impl Engine {
                         "destination already exists".to_string(),
                     );
                 } else if total == 0 {
-                    // 0 字节文件也要真实创建目标文件。
                     match FileSink::open(&dest, 0, false, true, self.opts.create_directories) {
                         Ok(sink) => sink.close(),
                         Err(err) => {
@@ -271,7 +270,6 @@ impl Engine {
                             truncate = false;
                             loaded_meta = true;
                         } else if had_meta {
-                            // 有断点元数据但无法复用（校验器/长度变化或元数据损坏），只能从头下载。
                             t.degraded = true;
                             t.reason = DegradeReason::ValidatorChanged;
                         }

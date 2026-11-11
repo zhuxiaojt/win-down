@@ -8,6 +8,8 @@ use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_MD5_ALGORITHM, BCRYPT_OBJECT_LENGTH, BCRYPT_SHA256_ALGORITHM,
 };
 
+// ---------------- bcrypt hashing ----------------
+
 fn nt_ok(status: i32) -> bool {
     status >= 0
 }
@@ -133,6 +135,8 @@ fn bcrypt_hash(path: &Path, algorithm: *const u16, out_len: usize) -> Result<Str
     Ok(hex)
 }
 
+// ---------------- crc32 ----------------
+
 const fn crc_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut i = 0;
@@ -173,6 +177,8 @@ fn crc32_file(path: &Path) -> Result<String, String> {
     }
     Ok(format!("{:08x}", (!crc) & 0xFFFF_FFFF))
 }
+
+// ---------------- entry point ----------------
 
 pub fn hash_file(path: &Path, algorithm: &str) -> Result<String, String> {
     match algorithm.trim().to_ascii_lowercase().as_str() {

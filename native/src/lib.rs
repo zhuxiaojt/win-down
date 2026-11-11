@@ -17,6 +17,8 @@ use napi_derive::napi;
 use crate::core::{Event, Options, Policy, TaskOptions};
 use crate::engine::{Engine, Sink};
 
+// ---------------- JS-facing types ----------------
+
 #[napi(object)]
 #[derive(Default)]
 pub struct JsOptions {
@@ -141,6 +143,8 @@ pub struct JsEvent {
     pub total_remaining: i64,
     pub degraded_tasks: i64,
 }
+
+// ---------------- conversions ----------------
 
 fn kind_name(kind: u8) -> &'static str {
     match kind {
@@ -334,6 +338,8 @@ fn convert_task(input: JsTaskOptions) -> std::result::Result<TaskOptions, String
     }
     Ok(task)
 }
+
+// ---------------- downloader handle ----------------
 
 #[napi]
 pub struct NativeDownloader {

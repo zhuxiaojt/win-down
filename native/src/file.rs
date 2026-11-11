@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// 直接写入目标文件的落盘器：使用位置写（seek_write），多个线程可并发写不同偏移。
+// ---------------- file sink ----------------
+
 pub struct FileSink {
     file: File,
     latency_micros: AtomicU64,
@@ -82,6 +83,8 @@ impl FileSink {
     }
 }
 
+// ---------------- path helpers ----------------
+
 pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -99,7 +102,6 @@ pub fn path_size(path: &Path) -> i64 {
     fs::metadata(path).map(|m| m.len() as i64).unwrap_or(-1)
 }
 
-/// 目标文件存在时生成 "name (n).ext" 形式的新路径。
 pub fn unique_rename(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let stem = path

@@ -6,6 +6,8 @@ use windows_sys::Win32::Networking::WinHttp::*;
 
 use crate::core::{HeaderList, Options, ProbeResult};
 
+// ---------------- response types ----------------
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
     Continue,
@@ -34,6 +36,8 @@ impl ResponseHead {
                 .contains("bytes")
     }
 }
+
+// ---------------- abort registry ----------------
 
 pub struct AbortRegistry {
     inner: Mutex<HashMap<u64, usize>>,
@@ -95,6 +99,8 @@ impl Drop for HandleGuard<'_> {
         }
     }
 }
+
+// ---------------- url & auth ----------------
 
 struct UrlParts {
     host: String,
@@ -221,6 +227,8 @@ fn basic_auth(url: &str) -> Option<String> {
     Some(format!("Basic {}", base64_encode(raw.as_bytes())))
 }
 
+// ---------------- request plumbing ----------------
+
 pub struct RequestSpec {
     pub method: String,
     pub url: String,
@@ -234,6 +242,8 @@ pub struct StreamCtx<'a> {
     pub on_data: &'a mut dyn FnMut(&[u8]) -> Flow,
 }
 
+// ---------------- winhttp helpers ----------------
+
 fn wide(s: &str) -> Vec<u16> {
     let mut v: Vec<u16> = s.encode_utf16().collect();
     v.push(0);
@@ -246,7 +256,6 @@ fn last_error() -> u32 {
 
 fn query_header(req: usize, id: u32) -> Option<String> {
     let h = req as *mut core::ffi::c_void;
-    // WinHTTP 以字节为单位返回缓冲区长度，这里按 WCHAR 数量换算。
     let mut bytes: u32 = 8192;
     let mut buf = vec![0u16; bytes as usize / 2];
     let mut index: u32 = 0;
@@ -347,8 +356,6 @@ fn build_head(req: usize) -> ResponseHead {
     let accept_ranges = query_header(req, WINHTTP_QUERY_ACCEPT_RANGES).unwrap_or_default();
     let mut content_length = parse_content_length(&content_length_raw);
     if status == 206 {
-        // 206 的 Content-Length 是"分段长度"而非资源总长（如 Range: bytes=0-0 时为 1），
-        // 总长只能从 Content-Range 的 total 取；解析失败（如 */）则保持 -1 表示未知。
         content_length = parse_total_from_content_range(&content_range);
     }
     ResponseHead {
@@ -363,6 +370,8 @@ fn build_head(req: usize) -> ResponseHead {
         content_type: query_header(req, WINHTTP_QUERY_CONTENT_TYPE).unwrap_or_default(),
     }
 }
+
+// ---------------- session & connection ----------------
 
 pub struct HttpWorker {
     opts: Options,
@@ -538,6 +547,8 @@ impl HttpWorker {
         Ok(req_usize)
     }
 
+    // ---------------- request execution ----------------
+
     fn perform(
         &mut self,
         spec: &RequestSpec,
@@ -549,7 +560,6 @@ impl HttpWorker {
         let parts = parse_url(&spec.url)?;
         let req = self.open_request(&parts, &spec.method)?;
 
-        // 注册请求句柄，强制关停时由其它线程关闭以中断阻塞读取。
         let id = self.abort.register(req);
         let _guard = HandleGuard {
             registry: &self.abort,
@@ -575,7 +585,6 @@ impl HttpWorker {
             header_text.push_str(v);
             header_text.push_str("\r\n");
         }
-        // Range 请求依赖未压缩的字节流，强制 identity。
         header_text.push_str("Accept-Encoding: identity\r\n");
         if !has_auth {
             if let Some(auth) = basic_auth(&spec.url) {
@@ -668,6 +677,8 @@ impl HttpWorker {
         Ok(head)
     }
 
+    // ---------------- probe & fetch ----------------
+
     pub fn probe(&mut self, url: &str, headers: &HeaderList) -> ProbeResult {
         let mut result = ProbeResult {
             content_length: -1,
@@ -688,8 +699,6 @@ impl HttpWorker {
         let mut head_failed = false;
         match self.perform(&head_spec, &mut noop) {
             Ok(head) => {
-                // 只有 200/206 的 HEAD 响应才是资源元数据的可信来源；
-                // 405 等响应也可能带 Content-Length: 0，误用会把文件当成 0 字节。
                 if head.status == 200 || head.status == 206 {
                     result.status = head.status as i64;
                     result.content_length = head.content_length;
@@ -707,13 +716,11 @@ impl HttpWorker {
                 }
             }
             Err(err) => {
-                // HEAD 可能被服务器拒绝，继续尝试 GET Range 探测。
                 result.error = err;
                 head_failed = true;
             }
         }
 
-        // 长度已知且为小文件时无需再探测 Range 支持。
         let enough_info = !head_failed
             && result.content_length >= 0
             && (result.accept_ranges || result.content_length < self.opts.small_file_threshold);
@@ -726,7 +733,6 @@ impl HttpWorker {
                 if_range: None,
             };
             let mut noop = StreamCtx {
-                // 只探测头部，拿到响应后立即结束，避免把整个文件读一遍。
                 on_head: &mut |_: &ResponseHead| Flow::Stop,
                 on_data: &mut |_: &[u8]| Flow::Continue,
             };
@@ -737,7 +743,6 @@ impl HttpWorker {
                     if head.status == 206 {
                         result.range_supported = true;
                         result.accept_ranges = true;
-                        // build_head 已把 206 的长度换算成 Content-Range 的资源总长。
                         if head.content_length >= 0 {
                             result.content_length = head.content_length;
                         }

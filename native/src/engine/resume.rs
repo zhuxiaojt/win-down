@@ -70,14 +70,12 @@ pub(super) fn load_meta(
     if file_total != total || segs.is_empty() {
         return None;
     }
-    // 服务器提供了校验器时必须严格匹配，不再要求两边都非空。
     if !etag.is_empty() && etag != file_etag {
         return None;
     }
     if !last_modified.is_empty() && last_modified != file_lm {
         return None;
     }
-    // 磁盘文件必须已经覆盖所有记录的写入偏移，否则会产生空洞。
     let need = segs
         .iter()
         .map(|s| s.start.saturating_add(s.written))

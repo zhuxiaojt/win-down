@@ -77,8 +77,6 @@ impl Engine {
                 if head.status != 206 {
                     return Flow::Stop;
                 }
-                // 206 必须从请求的偏移开始，否则写入会污染相邻分段。
-                // RFC 要求 206 必须带 Content-Range；缺失或无法解析时同样视为不可信，降级到单连接。
                 match parse_content_range_start(&head.content_range) {
                     Some(cr_start) if cr_start == pos => {}
                     _ => {
@@ -94,7 +92,6 @@ impl Engine {
                 Flow::Continue
             };
             let mut on_data = |chunk: &[u8]| -> Flow {
-                // 状态检查与 sink 克隆共用一次加锁；写入后的计数更新仍需第二次加锁（写入本身在锁外）。
                 let sink = {
                     let st = self.state.lock().unwrap();
                     let t = &st.tasks[idx];
@@ -112,7 +109,6 @@ impl Engine {
                     return Flow::Stop;
                 };
                 let offset = pos + written;
-                // 只接受落在本分段范围内的数据，超出的部分直接丢弃。
                 let remaining = end + 1 - offset;
                 if remaining <= 0 {
                     return Flow::Continue;
@@ -148,7 +144,6 @@ impl Engine {
             )
         };
 
-        // 请求返回时任务可能已经降级/暂停/取消（generation 已变），旧请求结果必须丢弃。
         {
             let mut st = self.state.lock().unwrap();
             let t = &mut st.tasks[idx];
@@ -229,7 +224,6 @@ impl Engine {
             return;
         }
 
-        // 失败/不完整：按状态决定重试次数。
         let mut st = self.state.lock().unwrap();
         let t = &mut st.tasks[idx];
         if t.state.terminal() {
@@ -238,12 +232,10 @@ impl Engine {
         t.segs[seg_idx].active = false;
         t.segs[seg_idx].written = new_written.min(seg_len);
         if t.pause_pending || t.cancel_pending {
-            // 暂停/取消前把已落盘的进度计入分段，保证 downloaded 与实际偏移一致。
             t.downloaded = t.segs.iter().map(|s| s.written).sum();
             return;
         }
         st.error_count += 1;
-        // 返回 206 但数据不完整属于可重试情形；只有明确的非重试 4xx 才直接失败。
         let retryable = status == 0
             || status == 408
             || status == 425
@@ -382,7 +374,6 @@ impl Engine {
                 Flow::Continue
             };
             let mut on_data = |chunk: &[u8]| -> Flow {
-                // 状态检查与 sink 克隆共用一次加锁；写入后的计数更新仍需第二次加锁（写入本身在锁外）。
                 let sink = {
                     let st = self.state.lock().unwrap();
                     let t = &st.tasks[idx];
@@ -419,7 +410,6 @@ impl Engine {
             http.fetch("GET", &url, &headers, None, None, &mut ctx)
         };
 
-        // generation 已变化（暂停/恢复/取消）时，丢弃这次请求的结果。
         {
             let st = self.state.lock().unwrap();
             if st.tasks[idx].generation != gen {
@@ -467,7 +457,6 @@ impl Engine {
             return;
         }
 
-        // 失败重试。
         let status = head_status;
         let retryable = status == 0
             || status == 408
@@ -529,7 +518,6 @@ impl Engine {
             )
         };
 
-        // 复用已有文件时先裁掉超出总长度的尾部。
         let mut actual_size = file::path_size(&path);
         if total > 0 && actual_size > total {
             if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
@@ -568,7 +556,6 @@ impl Engine {
             }
         }
 
-        // fsync 可能耗时几十毫秒，放到锁外做，避免阻塞其它任务的调度与进度更新。
         let sink = {
             let st = self.state.lock().unwrap();
             if st.tasks[idx].state.terminal() {

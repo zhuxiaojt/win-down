@@ -109,7 +109,6 @@ async function startServer() {
     }
 
     if (path === '/liar') {
-      // 宣称支持 Range，但带 Range 的 GET 请求会返回 200 全量。
       setCommon();
       res.setHeader('Accept-Ranges', 'bytes');
       const buf = body();
@@ -143,7 +142,6 @@ async function startServer() {
     }
 
     if (path === '/wrongrange') {
-      // 206 的 Content-Range 起点与请求不一致，用于校验分段偏移检查。
       setCommon();
       res.setHeader('Accept-Ranges', 'bytes');
       const buf = body();
@@ -179,7 +177,6 @@ async function startServer() {
     }
 
     if (path === '/nohead') {
-      // 拒绝 HEAD（405 且带 Content-Length: 0），GET 仍支持 Range；用于验证探针兜底路径。
       setCommon();
       res.setHeader('Accept-Ranges', 'bytes');
       const buf = body();
@@ -268,7 +265,6 @@ async function startServer() {
       return;
     }
 
-    // 默认 /file：支持 Range + ETag，可选限速。
     setCommon();
     res.setHeader('Accept-Ranges', 'bytes');
     const buf = body();

@@ -84,7 +84,6 @@ impl Engine {
             t.cancel_pending = false;
             let dest = PathBuf::from(&t.destination);
             let _ = fs::remove_file(meta_path(&dest));
-            // 先释放句柄，否则 Windows 上删除目标文件会因占用而失败。
             let sink = t.sink.take();
             if let Some(sink) = &sink {
                 sink.close();

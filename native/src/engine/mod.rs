@@ -15,6 +15,8 @@ mod scheduler;
 mod transfer;
 mod worker;
 
+// ---------------- engine state ----------------
+
 pub type Sink = Arc<dyn Fn(Event) + Send + Sync>;
 
 #[derive(Default, Clone)]
@@ -115,7 +117,6 @@ struct Command {
     kind: CmdKind,
     token: i32,
     arg: String,
-    // 命令附带布尔参数：Cancel/CancelAll/RemoveTask 用它表示是否删除不完整的目标文件。
     flag: bool,
 }
 
@@ -183,6 +184,8 @@ pub struct Engine {
     joined: AtomicBool,
     started: AtomicBool,
 }
+
+// ---------------- event builders ----------------
 
 fn task_base_event(kind: u8, t: &Task) -> Event {
     let mut e = Event::new(kind);
@@ -287,6 +290,8 @@ fn degraded_event(t: &Task, reason: DegradeReason) -> Event {
     e
 }
 
+// ---------------- helpers ----------------
+
 fn resume_enabled(opts: &Options, t: &Task) -> bool {
     t.opt.resume.unwrap_or(opts.resume)
 }
@@ -302,7 +307,6 @@ fn find_task(st: &State, id: &str) -> Option<usize> {
     st.tasks.iter().position(|t| t.id == id)
 }
 
-// 移除任务并修正排队 Job 中保存的索引。
 fn detach_task(st: &mut State, idx: usize) {
     st.tasks.remove(idx);
     st.jobs.retain(|j| j.kind == JobKind::StandaloneProbe || j.task != idx);
@@ -360,7 +364,6 @@ impl Engine {
             return;
         }
         let mut handles = Vec::new();
-        // 先只起少量 worker：一次性探针不会因此创建整套线程；有任务时再按并发上限扩容。
         let worker_count = self.opts.max_concurrency.min(2).max(1);
         for _ in 0..worker_count {
             let me = Arc::clone(self);
@@ -545,7 +548,6 @@ impl Engine {
         st.max_concurrency = value;
         let cap = policy_cap(st.policy, value);
         if raised {
-            // 用户显式调大上限时立即放开到策略上限，后续自适应若检测到饱和会自动回落。
             st.effective = cap;
         } else {
             st.effective = st.effective.min(cap).max(1);
@@ -596,7 +598,6 @@ impl Engine {
 
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::SeqCst);
-        // 必须中断阻塞中的 WinHTTP 调用，否则等待 join 可能长达 idle 超时。
         self.abort.abort_all();
         self.cv.notify_all();
         self.tick.notify_all();

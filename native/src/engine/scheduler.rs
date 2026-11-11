@@ -208,7 +208,6 @@ impl Engine {
                         self.emit_done(cmd.token, false, "ERR_NOT_FOUND", "task not found");
                         continue;
                     };
-                    // 终态任务和已暂停任务都视为“不活动”，可以移除；暂停任务需要先关句柄并清掉断点元数据。
                     let removable = st.tasks[idx].inflight == 0
                         && (st.tasks[idx].state.terminal()
                             || st.tasks[idx].state == TaskState::Paused);
@@ -217,14 +216,12 @@ impl Engine {
                         continue;
                     }
                     let dest = PathBuf::from(&st.tasks[idx].destination);
-                    // 先把文件句柄移出任务，确保 Windows 上后续删除不会因占用而失败。
                     let sink = st.tasks[idx].sink.take();
                     if let Some(sink) = &sink {
                         sink.close();
                     }
                     drop(sink);
                     let _ = fs::remove_file(meta_path(&dest));
-                    // 可选：连同不完整的目标文件一起删除（终态任务则为最终文件）。
                     if cmd.flag {
                         let _ = fs::remove_file(&dest);
                     }
@@ -265,7 +262,6 @@ impl Engine {
     fn schedule(&self, st: &mut State) {
         let now = now_ms();
 
-        // 完成挂起的暂停/取消（无在途连接时）。
         for idx in 0..st.tasks.len() {
             if st.tasks[idx].pause_pending && st.tasks[idx].inflight == 0 {
                 self.finalize_pause(st, idx);
@@ -286,7 +282,6 @@ impl Engine {
             }
         }
 
-        // 为排队任务启动探针。
         let mut probing = st
             .tasks
             .iter()
@@ -347,7 +342,6 @@ impl Engine {
             }
         }
 
-        // 单流任务：等待所有在途连接结束后启动。
         let mut host_use: HashMap<String, i64> = HashMap::new();
         for t in st.tasks.iter() {
             if !t.host.is_empty() {
@@ -389,7 +383,6 @@ impl Engine {
             }
         }
 
-        // 到期重试的分段。
         for idx in 0..st.tasks.len() {
             if st.tasks[idx].mode != Mode::Segmented
                 || !matches!(
@@ -433,7 +426,6 @@ impl Engine {
             }
         }
 
-        // 连接预算分配（基础 1 + 轮询追加）。
         let mut eligible: Vec<usize> = Vec::new();
         for idx in 0..st.tasks.len() {
             let t = &st.tasks[idx];
@@ -447,7 +439,6 @@ impl Engine {
                 eligible.push(idx);
             }
         }
-        // 连接预算优先给高优先级任务（数值越大越优先），同优先级按提交顺序。
         eligible.sort_by(|&a, &b| st.tasks[b].priority.cmp(&st.tasks[a].priority));
         let mut in_flight: i64 = eligible
             .iter()
@@ -529,7 +520,6 @@ impl Engine {
             }
         }
 
-        // 进度与统计。
         let interval = self.opts.progress_interval_ms.max(20);
         if now - st.last_progress_at >= interval {
             st.last_progress_at = now;

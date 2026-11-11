@@ -9,6 +9,8 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::core::Policy;
 
+// ---------------- path & string helpers ----------------
+
 pub fn wide(s: &str) -> Vec<u16> {
     let mut v: Vec<u16> = s.encode_utf16().collect();
     v.push(0);
@@ -19,7 +21,6 @@ pub fn is_remote_volume(path: &Path) -> bool {
     let s = path.to_string_lossy();
     let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
     if stripped.starts_with(r"\\") {
-        // UNC path (\\server\share)
         return true;
     }
     let root: String = stripped.chars().take(3).collect();
@@ -28,9 +29,10 @@ pub fn is_remote_volume(path: &Path) -> bool {
     }
     let w = wide(&root);
     let ok = unsafe { GetDriveTypeW(w.as_ptr()) };
-    // DRIVE_REMOTE
     ok == 4
 }
+
+// ---------------- cpu & memory sampling ----------------
 
 pub fn mem_available_pct() -> f64 {
     let mut st: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
@@ -64,7 +66,6 @@ extern "system" {
     ) -> i32;
 }
 
-/// Returns (idle, kernel, user) cumulative times in 100ns units.
 pub fn system_times() -> (u64, u64, u64) {
     let mut idle = FileTimeRaw::default();
     let mut kernel = FileTimeRaw::default();
@@ -76,6 +77,8 @@ pub fn system_times() -> (u64, u64, u64) {
         (idle.as_u64(), kernel.as_u64(), user.as_u64())
     }
 }
+
+// ---------------- thread priority ----------------
 
 pub fn apply_thread_priority(policy: Policy) {
     let p = match policy {
