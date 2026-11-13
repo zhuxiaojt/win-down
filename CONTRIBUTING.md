@@ -37,7 +37,9 @@ Before making changes, answer one question: **which side am I changing?**
 ```
 src/                  # TypeScript binding layer
 native/src/           # Rust core engine
-scripts/build.js      # cargo build + copy of the native module
+scripts/
+  build.js            # cargo build + copy of the native module
+  version.js          # sync the project version to every manifest
 docs/                 # Chinese / English documentation
 test/                 # local HTTP server + integration tests
 ```

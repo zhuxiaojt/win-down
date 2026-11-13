@@ -258,7 +258,7 @@ impl Engine {
                             segs.iter_mut().for_each(|s| {
                                 s.active = false;
                                 s.retry_at = 0;
-                                if s.written >= s.end - s.start + 1 {
+                                if s.written > s.end - s.start {
                                     s.written = s.end - s.start + 1;
                                     s.done = true;
                                 }

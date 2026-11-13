@@ -37,7 +37,9 @@
 ```
 src/                  # TypeScript 绑定层
 native/src/           # Rust 核心引擎
-scripts/build.js      # cargo 构建并复制原生模块
+scripts/
+  build.js            # cargo 构建并复制原生模块
+  version.js          # 同步项目版本到每个清单文件
 docs/                 # 中文 / 英文文档
 test/                 # 本地 HTTP 服务 + 集成测试
 ```

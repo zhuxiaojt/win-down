@@ -364,7 +364,7 @@ impl Engine {
             return;
         }
         let mut handles = Vec::new();
-        let worker_count = self.opts.max_concurrency.min(2).max(1);
+        let worker_count = self.opts.max_concurrency.clamp(1, 2);
         for _ in 0..worker_count {
             let me = Arc::clone(self);
             handles.push(thread::spawn(move || me.worker_loop()));

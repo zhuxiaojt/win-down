@@ -1,6 +1,6 @@
 {
   "name": "win-down",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Windows multi-threaded downloader with Node-API bindings (Rust + WinHTTP)",
   "main": "cjs/index.cjs",
   "types": "cjs/index.d.cts",
@@ -37,6 +37,7 @@
     "build:ts": "npm run build:ts:cjs && npm run build:ts:esm",
     "build:native": "node scripts/build.js",
     "build": "npm run build:ts && npm run build:native",
+    "bump": "node scripts/version.js",
     "test": "node test/test.js"
   },
   "engines": {

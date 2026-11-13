@@ -446,8 +446,7 @@ impl Engine {
             .sum();
         let budget = st.effective as i64;
 
-        for idx in 0..eligible.len() {
-            let i = eligible[idx];
+        for &i in &eligible {
             if in_flight >= budget {
                 break;
             }

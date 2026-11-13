@@ -241,7 +241,7 @@ impl Engine {
             || status == 425
             || status == 429
             || status >= 500
-            || matches!(&result, Ok(_));
+            || result.is_ok();
         if !retryable && status != 0 {
             let msg = format!("server returned HTTP {status}");
             drop(st);
@@ -463,7 +463,7 @@ impl Engine {
             || status == 425
             || status == 429
             || status >= 500
-            || matches!(&result, Ok(_));
+            || result.is_ok();
         let mut st = self.state.lock().unwrap();
         if st.tasks[idx].state.terminal() {
             return;

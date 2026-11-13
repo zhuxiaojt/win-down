@@ -175,7 +175,7 @@ fn crc32_file(path: &Path) -> Result<String, String> {
             crc = (crc >> 8) ^ CRC_TABLE[idx];
         }
     }
-    Ok(format!("{:08x}", (!crc) & 0xFFFF_FFFF))
+    Ok(format!("{:08x}", !crc))
 }
 
 // ---------------- entry point ----------------

@@ -115,7 +115,7 @@ fn parse_url(url: &str) -> Result<UrlParts, String> {
         .filter(|(s, _)| s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("https"))
         .ok_or_else(|| format!("unsupported url: {url}"))?;
     let secure = scheme.eq_ignore_ascii_case("https");
-    let (authority, path) = match rest.find(|c| c == '/' || c == '?') {
+    let (authority, path) = match rest.find(['/', '?']) {
         Some(i) => {
             let (a, tail) = rest.split_at(i);
             let p = if tail.starts_with('?') {
@@ -194,7 +194,7 @@ fn hex_val(b: u8) -> Option<u8> {
 
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0];
         let b1 = *chunk.get(1).unwrap_or(&0);
@@ -218,7 +218,7 @@ fn base64_encode(data: &[u8]) -> String {
 fn basic_auth(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let authority = rest
-        .split(|c| c == '/' || c == '?' || c == '#')
+        .split(['/', '?', '#'])
         .next()
         .unwrap_or(rest);
     let (userinfo, _) = authority.rsplit_once('@')?;

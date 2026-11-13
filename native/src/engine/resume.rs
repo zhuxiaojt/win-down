@@ -59,7 +59,7 @@ pub(super) fn load_meta(
                         start,
                         end,
                         written,
-                        done: written >= end - start + 1,
+                        done: written > end - start,
                         ..Default::default()
                     });
                 }
@@ -131,10 +131,6 @@ pub(super) fn take_segment(t: &mut Task, now: i64) -> Option<usize> {
             return Some(i);
         }
     }
-    for i in 0..t.next_seg.min(t.segs.len()) {
-        if !t.segs[i].done && !t.segs[i].active && t.segs[i].retry_at == 0 {
-            return Some(i);
-        }
-    }
-    None
+    (0..t.next_seg.min(t.segs.len()))
+        .find(|&i| !t.segs[i].done && !t.segs[i].active && t.segs[i].retry_at == 0)
 }
