@@ -425,8 +425,11 @@ impl NativeDownloader {
     }
 
     #[napi]
-    pub fn shutdown(&self) {
+    pub fn shutdown(&self, env: Env) {
         self.engine.shutdown();
+        unsafe {
+            napi::sys::napi_unref_threadsafe_function(env.raw(), self._tsfn.handle.get_raw());
+        }
     }
 }
 

@@ -491,6 +491,23 @@ async function main() {
     assert.strictEqual(dlFailed.code, 'ERR_SHUTDOWN');
   });
 
+  await test('shutdown after terminal state still resolves wait()', async () => {
+    const dl = new Downloader({});
+    const task = dl.addTask({
+      url: `${base}/file?size=${4 * MiB}&delay=4&chunk=65536`,
+      destination: dest('shutdown-after-complete.bin'),
+    });
+    task.on('state', (e) => {
+      if (e.state === 'completed') dl.shutdown();
+    });
+    const event = await withTimeout(task.wait(), 10000, 'wait after shutdown');
+    assert.strictEqual(event.kind, 'completed');
+    assert.strictEqual(event.state, 'completed');
+    assert.strictEqual(event.percent, 100);
+    assert.strictEqual(task.done, true);
+    assert.strictEqual((await task.wait()).kind, 'completed');
+  });
+
   await test('removeTask accepts paused task', async () => {
     const dl = new Downloader({ resume: true });
     try {

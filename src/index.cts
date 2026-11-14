@@ -509,7 +509,7 @@ export class Downloader extends EventEmitter {
   }
 
   private _onEvent(event: NativeEvent): void {
-    if (this._closed) return;
+    if (this._closed && event.kind !== 'completed') return;
     if (event.kind === 'done') {
       const waiter = this._pending.get(event.token!);
       if (waiter) {
