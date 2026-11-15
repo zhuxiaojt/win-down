@@ -9,6 +9,8 @@ A multi-threaded downloader for Windows. The core engine is implemented in Rust 
 ## Features
 
 - **Multi-threaded segmented downloads**: automatically detects `Range` support and downloads in parallel segments
+- **Dynamic segmentation**: splits the largest remaining segment when concurrency becomes idle, avoiding a single-connection tail
+- **HTTP/2 multiplexing**: reuses one connection for parallel ranges when both the server and the system support it, falling back to HTTP/1.1 keep-alive otherwise
 - **Adaptive degradation**: automatically falls back to a single connection when the server doesn't support segmentation, and reports the reason
 - **Resumable downloads**: resumes based on segment progress and re-downloads from scratch when validators change
 - **Mirror failover**: configure multiple mirror URLs that are tried automatically on failure

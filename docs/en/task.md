@@ -25,10 +25,10 @@ await task.wait(); // resolves with ProgressEvent on completion; rejects with Do
 | `expectedSize` | `number` | `-1` | Expected file size, verified after download (-1 skips the check) |
 | `checksum` | `{ algorithm, value }` | - | Integrity check; `algorithm` is `'sha256' \| 'md5' \| 'crc32'` and `value` is the hex digest |
 | `priority` | `number` | `0` | Queue priority; higher values are scheduled first |
-| `maxConcurrency` | `number` | global value | Per-task concurrency override |
+| `maxConcurrency` | `number` | global value | Per-task concurrency cap; never exceeds the global effective concurrency |
 | `overwrite` | `'error' \| 'overwrite' \| 'rename' \| 'skip'` | `'error'` | Behavior when the destination file already exists |
 | `resume` | `boolean` | global value | Per-task resume override |
-| `segmentSize` | `number` | global value | Per-task segment size override |
+| `segmentSize` | `number` | global value | Per-task target segment size override (baseline; actual segments also depend on the concurrency target, `maxSegmentsPerTask`, and runtime splitting) |
 
 ### overwrite modes
 
@@ -54,7 +54,7 @@ const task = downloader.addTask({
   expectedSize: 104857600, // verify the actual size after download
   checksum: { algorithm: 'sha256', value: 'e3b0c44298fc1c14...' },
   priority: 10,            // high priority, scheduled before regular tasks
-  maxConcurrency: 16,      // extra concurrency for this task alone
+  maxConcurrency: 16,      // up to 16 connections for this task, capped by the global effective concurrency
   overwrite: 'rename',     // rename if the file already exists
   resume: true,            // enable resumable downloads
 });
@@ -91,7 +91,7 @@ console.log(t.skipped); // true (if the file was already there)
 | `speedBps` | `number` | Instantaneous speed (B/s) |
 | `etaSeconds` | `number \| null` | Estimated time remaining (seconds) |
 | `activeConnections` | `number` | Currently active connections |
-| `segmentsTotal` / `segmentsCompleted` | `number` | Total / completed segment counts |
+| `segmentsTotal` / `segmentsCompleted` | `number` | Total / completed segment counts (`segmentsTotal` may grow due to runtime splitting) |
 | `degraded` | `boolean` | Whether the task is in degraded mode |
 | `degradeReason` | `DegradeReason \| null` | Degradation reason, see [errors.md](errors.md) |
 | `checksumVerified` | `boolean \| null` | Checksum result (`null` when no checksum configured) |

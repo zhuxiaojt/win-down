@@ -373,39 +373,62 @@ fn build_head(req: usize) -> ResponseHead {
 
 // ---------------- session & connection ----------------
 
+pub struct HttpShared {
+    session: Mutex<usize>,
+    connects: Mutex<HashMap<(String, u16), usize>>,
+}
+
+impl HttpShared {
+    pub fn new() -> Arc<HttpShared> {
+        Arc::new(HttpShared {
+            session: Mutex::new(0),
+            connects: Mutex::new(HashMap::new()),
+        })
+    }
+}
+
+impl Drop for HttpShared {
+    fn drop(&mut self) {
+        let handles: Vec<usize> = {
+            let mut map = self.connects.lock().unwrap();
+            map.drain().map(|(_, h)| h).collect()
+        };
+        for h in handles {
+            unsafe {
+                WinHttpCloseHandle(h as *mut core::ffi::c_void);
+            }
+        }
+        let session = {
+            let mut s = self.session.lock().unwrap();
+            std::mem::replace(&mut *s, 0)
+        };
+        if session != 0 {
+            unsafe {
+                WinHttpCloseHandle(session as *mut core::ffi::c_void);
+            }
+        }
+    }
+}
+
 pub struct HttpWorker {
     opts: Options,
     abort: Arc<AbortRegistry>,
-    session: usize,
-    connect: Option<(String, u16, usize)>,
-}
-
-impl Drop for HttpWorker {
-    fn drop(&mut self) {
-        unsafe {
-            if let Some((_, _, h)) = self.connect.take() {
-                WinHttpCloseHandle(h as *mut core::ffi::c_void);
-            }
-            if self.session != 0 {
-                WinHttpCloseHandle(self.session as *mut core::ffi::c_void);
-            }
-        }
-    }
+    shared: Arc<HttpShared>,
 }
 
 impl HttpWorker {
-    pub fn new(opts: Options, abort: Arc<AbortRegistry>) -> HttpWorker {
+    pub fn new(opts: Options, abort: Arc<AbortRegistry>, shared: Arc<HttpShared>) -> HttpWorker {
         HttpWorker {
             opts,
             abort,
-            session: 0,
-            connect: None,
+            shared,
         }
     }
 
-    fn ensure_session(&mut self) -> Result<usize, String> {
-        if self.session != 0 {
-            return Ok(self.session);
+    fn ensure_session(&self) -> Result<usize, String> {
+        let mut guard = self.shared.session.lock().unwrap();
+        if *guard != 0 {
+            return Ok(*guard);
         }
         let agent = wide(&self.opts.user_agent);
         let access = match self.opts.proxy.to_ascii_lowercase().as_str() {
@@ -446,7 +469,7 @@ impl HttpWorker {
             return Err(format!("WinHttpOpen failed: {}", last_error()));
         }
         let h = handle as usize;
-        self.session = h;
+        *guard = h;
         unsafe {
             WinHttpSetTimeouts(
                 h as *mut core::ffi::c_void,
@@ -459,15 +482,12 @@ impl HttpWorker {
         Ok(h)
     }
 
-    fn ensure_connect(&mut self, parts: &UrlParts) -> Result<usize, String> {
-        if let Some((host, port, h)) = &self.connect {
-            if host == &parts.host && *port == parts.port {
+    fn ensure_connect(&self, parts: &UrlParts) -> Result<usize, String> {
+        let key = (parts.host.clone(), parts.port);
+        {
+            let map = self.shared.connects.lock().unwrap();
+            if let Some(h) = map.get(&key) {
                 return Ok(*h);
-            }
-        }
-        if let Some((_, _, old)) = self.connect.take() {
-            unsafe {
-                WinHttpCloseHandle(old as *mut core::ffi::c_void);
             }
         }
         let session = self.ensure_session()?;
@@ -483,8 +503,15 @@ impl HttpWorker {
         if h.is_null() {
             return Err(format!("WinHttpConnect failed: {}", last_error()));
         }
-        self.connect = Some((parts.host.clone(), parts.port, h as usize));
-        Ok(h as usize)
+        let h = h as usize;
+        let mut map = self.shared.connects.lock().unwrap();
+        let slot = map.entry(key).or_insert(h);
+        if *slot != h {
+            unsafe {
+                WinHttpCloseHandle(h as *mut core::ffi::c_void);
+            }
+        }
+        Ok(*slot)
     }
 
     fn open_request(&mut self, parts: &UrlParts, method: &str) -> Result<usize, String> {
@@ -543,6 +570,13 @@ impl HttpWorker {
                     4,
                 );
             }
+            let proto: u32 = WINHTTP_PROTOCOL_FLAG_HTTP2;
+            let _ = WinHttpSetOption(
+                req,
+                WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL,
+                (&proto as *const u32).cast(),
+                4,
+            );
         }
         Ok(req_usize)
     }

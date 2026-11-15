@@ -318,6 +318,10 @@ async function startServer() {
     baseUrl: `http://127.0.0.1:${port}`,
     close: () =>
       new Promise((resolve, reject) => {
+        // 客户端可能还握着 keep-alive 连接，避免 close 等空闲超时拖慢用例。
+        if (typeof server.closeAllConnections === 'function') {
+          server.closeAllConnections();
+        }
         server.close((err) => (err ? reject(err) : resolve()));
       }),
   };

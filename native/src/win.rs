@@ -44,6 +44,17 @@ pub fn mem_available_pct() -> f64 {
     (st.ullAvailPhys as f64 / st.ullTotalPhys as f64) * 100.0
 }
 
+/// 可用物理内存字节数，用于按内存预算动态推导并发连接数。
+pub fn mem_available_bytes() -> u64 {
+    let mut st: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    st.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    let ok = unsafe { GlobalMemoryStatusEx(&mut st) };
+    if ok == 0 {
+        return 0;
+    }
+    st.ullAvailPhys
+}
+
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct FileTimeRaw {

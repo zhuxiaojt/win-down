@@ -32,6 +32,9 @@ impl Engine {
                 }
                 return;
             }
+            if seg_idx >= t.segs.len() {
+                return;
+            }
             let s = &t.segs[seg_idx];
             if s.done {
                 return;
@@ -51,7 +54,7 @@ impl Engine {
                 t.mode,
             )
         };
-        let (url, headers, start, end, pos, etag, mode) = snapshot;
+        let (url, headers, _start, end, pos, etag, mode) = snapshot;
         if mode != Mode::Segmented {
             return;
         }
@@ -64,7 +67,7 @@ impl Engine {
         let mut range_ignored = false;
         let mut range_mismatch = false;
         let mut bad_encoding = false;
-        let mut written: i64 = 0;
+        let mut read_bytes: i64 = 0;
         let mut write_error: Option<String> = None;
 
         let result = {
@@ -92,7 +95,7 @@ impl Engine {
                 Flow::Continue
             };
             let mut on_data = |chunk: &[u8]| -> Flow {
-                let sink = {
+                let (sink, offset, take) = {
                     let st = self.state.lock().unwrap();
                     let t = &st.tasks[idx];
                     if t.generation != gen
@@ -102,28 +105,48 @@ impl Engine {
                     {
                         return Flow::Stop;
                     }
-                    t.sink.clone()
+                    let Some(sink) = t.sink.clone() else {
+                        write_error = Some("sink closed".to_string());
+                        return Flow::Stop;
+                    };
+                    let Some(seg) = t.segs.get(seg_idx) else {
+                        return Flow::Stop;
+                    };
+                    let offset = seg.start + seg.written;
+                    let remaining = seg.end + 1 - offset;
+                    if remaining <= 0 {
+                        return Flow::Stop;
+                    }
+                    let take = (chunk.len() as i64).min(remaining) as usize;
+                    (sink, offset, take)
                 };
-                let Some(sink) = sink else {
-                    write_error = Some("sink closed".to_string());
-                    return Flow::Stop;
-                };
-                let offset = pos + written;
-                let remaining = end + 1 - offset;
-                if remaining <= 0 {
-                    return Flow::Continue;
-                }
-                let take = (chunk.len() as i64).min(remaining) as usize;
                 if let Err(err) = sink.write_at(offset, &chunk[..take]) {
                     write_error = Some(err.to_string());
                     return Flow::Stop;
                 }
-                let len = take as i64;
-                written += len;
                 let mut st = self.state.lock().unwrap();
                 let t = &mut st.tasks[idx];
-                t.downloaded += len;
-                t.session_bytes += len;
+                if t.generation != gen
+                    || !matches!(t.state, TaskState::Downloading | TaskState::Retrying)
+                    || t.pause_pending
+                    || t.cancel_pending
+                {
+                    return Flow::Stop;
+                }
+                let Some(seg) = t.segs.get_mut(seg_idx) else {
+                    return Flow::Stop;
+                };
+                let room = (seg.end + 1 - (seg.start + seg.written)).max(0);
+                let applied = (take as i64).min(room);
+                if applied > 0 {
+                    seg.written += applied;
+                    t.downloaded += applied;
+                    t.session_bytes += applied;
+                }
+                read_bytes += applied;
+                if applied < take as i64 {
+                    return Flow::Stop;
+                }
                 Flow::Continue
             };
             let mut ctx = StreamCtx {
@@ -155,15 +178,11 @@ impl Engine {
             }
         }
 
-        let seg_len = end - start + 1;
-        let initial = {
-            let st = self.state.lock().unwrap();
-            st.tasks[idx].segs[seg_idx].written
-        };
-
         if let Some(err) = write_error {
             let mut st = self.state.lock().unwrap();
-            st.tasks[idx].segs[seg_idx].active = false;
+            if seg_idx < st.tasks[idx].segs.len() {
+                st.tasks[idx].segs[seg_idx].active = false;
+            }
             drop(st);
             self.fail_task(idx, "ERR_IO", &format!("write failed: {err}"));
             return;
@@ -171,33 +190,49 @@ impl Engine {
 
         if range_ignored {
             let mut st = self.state.lock().unwrap();
-            st.tasks[idx].segs[seg_idx].active = false;
+            if let Some(s) = st.tasks[idx].segs.get_mut(seg_idx) {
+                s.active = false;
+            }
             drop(st);
             if !self.start_single(idx, DegradeReason::RangeIgnored) {
                 let mut st = self.state.lock().unwrap();
-                st.tasks[idx].segs[seg_idx].retry_at = now_ms() + self.opts.base_retry_ms;
+                if let Some(s) = st.tasks[idx].segs.get_mut(seg_idx) {
+                    s.retry_at = now_ms() + self.opts.base_retry_ms;
+                }
             }
             return;
         }
         if range_mismatch {
             let mut st = self.state.lock().unwrap();
-            st.tasks[idx].segs[seg_idx].active = false;
+            if let Some(s) = st.tasks[idx].segs.get_mut(seg_idx) {
+                s.active = false;
+            }
             drop(st);
             if !self.start_single(idx, DegradeReason::RangeMismatch) {
                 let mut st = self.state.lock().unwrap();
-                st.tasks[idx].segs[seg_idx].retry_at = now_ms() + self.opts.base_retry_ms;
+                if let Some(s) = st.tasks[idx].segs.get_mut(seg_idx) {
+                    s.retry_at = now_ms() + self.opts.base_retry_ms;
+                }
             }
             return;
         }
         if bad_encoding {
             let mut st = self.state.lock().unwrap();
-            st.tasks[idx].segs[seg_idx].active = false;
+            if let Some(s) = st.tasks[idx].segs.get_mut(seg_idx) {
+                s.active = false;
+            }
             drop(st);
             self.start_single(idx, DegradeReason::ContentEncoding);
             return;
         }
 
-        let new_written = initial + written;
+        let (seg_len, new_written) = {
+            let st = self.state.lock().unwrap();
+            match st.tasks[idx].segs.get(seg_idx) {
+                Some(s) => (s.end - s.start + 1, s.written),
+                None => return,
+            }
+        };
         let status = head_status;
 
         let success = match &result {
@@ -207,8 +242,14 @@ impl Engine {
 
         if success && new_written >= seg_len {
             let mut st = self.state.lock().unwrap();
+            if st.tasks[idx].generation != gen {
+                return;
+            }
             st.success_count += 1;
             let t = &mut st.tasks[idx];
+            if seg_idx >= t.segs.len() {
+                return;
+            }
             t.segs[seg_idx].active = false;
             t.segs[seg_idx].written = seg_len;
             t.segs[seg_idx].done = true;
@@ -226,11 +267,13 @@ impl Engine {
 
         let mut st = self.state.lock().unwrap();
         let t = &mut st.tasks[idx];
-        if t.state.terminal() {
+        if t.generation != gen || t.state.terminal() || seg_idx >= t.segs.len() {
             return;
         }
         t.segs[seg_idx].active = false;
-        t.segs[seg_idx].written = new_written.min(seg_len);
+        if t.segs[seg_idx].written > seg_len {
+            t.segs[seg_idx].written = seg_len;
+        }
         if t.pause_pending || t.cancel_pending {
             t.downloaded = t.segs.iter().map(|s| s.written).sum();
             return;
@@ -270,7 +313,7 @@ impl Engine {
             t.state = TaskState::Retrying;
             t.error_message = match &result {
                 Err(err) => err.clone(),
-                Ok(_) => format!("incomplete segment ({} bytes)", new_written),
+                Ok(_) => format!("incomplete segment ({} bytes)", read_bytes),
             };
             state_event(t)
         };
@@ -278,14 +321,19 @@ impl Engine {
         self.emit(ev);
     }
 
-    fn complete_segment(&self, idx: usize, seg_idx: usize, _gen: u64) {
+    fn complete_segment(&self, idx: usize, seg_idx: usize, gen: u64) {
         let all_done = {
             let mut st = self.state.lock().unwrap();
             let t = &mut st.tasks[idx];
-            if seg_idx < t.segs.len() {
-                t.segs[seg_idx].done = true;
-                t.segs[seg_idx].written = t.segs[seg_idx].end - t.segs[seg_idx].start + 1;
-                t.segs[seg_idx].active = false;
+            if t.generation != gen {
+                return;
+            }
+            if let Some(s) = t.segs.get_mut(seg_idx) {
+                s.done = true;
+                s.written = s.end - s.start + 1;
+                s.active = false;
+            } else {
+                return;
             }
             t.segs.iter().all(|s| s.done)
         };
@@ -553,6 +601,14 @@ impl Engine {
                     self.fail_task(idx, "ERR_CHECKSUM", &err);
                     return;
                 }
+            }
+        }
+
+        {
+            let st = self.state.lock().unwrap();
+            let t = &st.tasks[idx];
+            if t.state.terminal() || t.pause_pending || t.cancel_pending {
+                return;
             }
         }
 

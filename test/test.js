@@ -461,10 +461,67 @@ async function main() {
     }
   });
 
+  await test('repeated idle shutdown does not hang', async () => {
+    for (let i = 0; i < 50; i++) {
+      const dl = new Downloader({ maxConcurrency: 4 });
+      dl.shutdown();
+    }
+  });
+
+  await test('pause during verify then resume still completes', async () => {
+    const srv = await startServer();
+    const dl = new Downloader({ maxConcurrency: 1, maxPerHost: 1, segmentSize: 256 * 1024, smallFileThreshold: 1024 });
+    try {
+      const bigSize = 3 * MiB;
+      const smallSize = 256 * 1024;
+      const big = dl.addTask({ url: `${srv.baseUrl}/file?size=${bigSize}&delay=6&chunk=32768`, destination: dest('verify-big.bin') });
+      const small = dl.addTask({ url: `${srv.baseUrl}/file?size=${smallSize}&delay=2&chunk=32768`, destination: dest('verify-small.bin') });
+      let paused = false;
+      small.on('state', (e) => {
+        if (e.state === 'verifying' && !paused) {
+          paused = true;
+          small.pause().then(() => new Promise((r) => setTimeout(r, 150))).then(() => small.resume()).catch(() => {});
+        }
+      });
+      await withTimeout(small.wait(), 30000, 'verify resume');
+      assert.strictEqual(sha256(fs.readFileSync(dest('verify-small.bin'))), sha256(makeBody(smallSize)));
+      assert.strictEqual(small.done, true);
+      await big.wait().catch(() => {});
+    } finally {
+      dl.shutdown();
+      await srv.close();
+    }
+  });
+
+  await test('pause while single job is queued then resume still downloads', async () => {
+    const srv = await startServer();
+    const dl = new Downloader({ maxConcurrency: 1, maxPerHost: 1, smallFileThreshold: 10 * MiB });
+    try {
+      const bigSize = 2 * MiB;
+      const smallSize = 512 * 1024;
+      const big = dl.addTask({ url: `${srv.baseUrl}/file?size=${bigSize}&delay=6&chunk=32768`, destination: dest('single-big.bin') });
+      const small = dl.addTask({ url: `${srv.baseUrl}/file?size=${smallSize}&delay=2&chunk=32768`, destination: dest('single-small.bin') });
+      let paused = false;
+      small.on('state', (e) => {
+        if (e.state === 'downloading' && !paused) {
+          paused = true;
+          small.pause().then(() => new Promise((r) => setTimeout(r, 150))).then(() => small.resume()).catch(() => {});
+        }
+      });
+      await withTimeout(small.wait(), 30000, 'single resume');
+      assert.strictEqual(sha256(fs.readFileSync(dest('single-small.bin'))), sha256(makeBody(smallSize)));
+      assert.strictEqual(small.done, true);
+      await big.wait().catch(() => {});
+    } finally {
+      dl.shutdown();
+      await srv.close();
+    }
+  });
+
   await test('shutdown rejects pending waiters', async () => {
     const dl = new Downloader({});
     const task = dl.addTask({
-      url: `${base}/file?size=${4 * MiB}&delay=12&chunk=65536`,
+      url: `${base}/file?size=${8 * MiB}&delay=12&chunk=65536`,
       destination: dest('shutdown.bin'),
     });
     let taskFailed = null;
@@ -602,6 +659,29 @@ async function main() {
       assert.ok(!fs.existsSync(`${dest('remove-file.bin')}.wdl`), 'sidecar removed');
     } finally {
       dl.shutdown();
+    }
+  });
+
+  await test('policy changes resource-derived concurrency (maxConcurrency stays a cap)', async () => {
+    const favor = new Downloader({ maxConcurrency: 999, policy: 'favor-other-apps' });
+    const balanced = new Downloader({ maxConcurrency: 999, policy: 'balanced' });
+    const max = new Downloader({ maxConcurrency: 999, policy: 'max-performance' });
+    try {
+      const f = favor.getStats().effectiveConcurrency;
+      const b = balanced.getStats().effectiveConcurrency;
+      const m = max.getStats().effectiveConcurrency;
+      assert.ok(f < b, `favor(${f}) should be below balanced(${b})`);
+      assert.ok(b <= m, `balanced(${b}) should not exceed max(${m})`);
+    } finally {
+      favor.shutdown();
+      balanced.shutdown();
+      max.shutdown();
+    }
+    const capped = new Downloader({ maxConcurrency: 2, policy: 'max-performance' });
+    try {
+      assert.strictEqual(capped.getStats().effectiveConcurrency, 2);
+    } finally {
+      capped.shutdown();
     }
   });
 

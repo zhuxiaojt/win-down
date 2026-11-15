@@ -6,7 +6,7 @@ use std::thread::{self, JoinHandle};
 
 use crate::core::*;
 use crate::file::{self, FileSink};
-use crate::http::AbortRegistry;
+use crate::http::{AbortRegistry, HttpShared};
 
 mod lifecycle;
 mod monitor;
@@ -26,6 +26,7 @@ struct Segment {
     written: i64,
     done: bool,
     active: bool,
+    running: bool,
     retries: u32,
     retry_at: i64,
 }
@@ -155,6 +156,10 @@ struct State {
 
     last_adapt_at: i64,
     last_adapt_speed: f64,
+    last_adapt_inflight: usize,
+    split_ok: bool,
+    split_off_at: i64,
+    running_jobs: usize,
     last_stats_at: i64,
     last_progress_at: i64,
 }
@@ -177,12 +182,14 @@ pub struct Engine {
     cv: Condvar,
     tick: Condvar,
     abort: Arc<AbortRegistry>,
+    http: Arc<HttpShared>,
     handles: Mutex<Vec<JoinHandle<()>>>,
     workers: Mutex<usize>,
     self_weak: OnceLock<Weak<Engine>>,
     stop: AtomicBool,
     joined: AtomicBool,
     started: AtomicBool,
+    cores: usize,
 }
 
 // ---------------- event builders ----------------
@@ -220,8 +227,20 @@ fn task_base_event(kind: u8, t: &Task) -> Event {
     } else {
         0.0
     };
-    e.eta_seconds = if t.speed > 0.0 && t.total > 0 {
-        ((t.total - t.downloaded) as f64 / t.speed).max(0.0)
+    let remaining = (t.total - t.downloaded).max(0);
+    let eta_speed = if t.speed > 1024.0 {
+        t.speed
+    } else {
+        e.average_speed_bps
+    };
+    e.eta_seconds = if t.total <= 0 {
+        -1.0
+    } else if remaining == 0 {
+        0.0
+    } else if eta_speed > 1024.0 {
+        (remaining as f64 / eta_speed)
+            .min(7.0 * 86400.0)
+            .max(0.0)
     } else {
         -1.0
     };
@@ -296,12 +315,7 @@ fn resume_enabled(opts: &Options, t: &Task) -> bool {
     t.opt.resume.unwrap_or(opts.resume)
 }
 
-fn policy_cap(policy: Policy, max_concurrency: usize) -> usize {
-    match policy {
-        Policy::FavorOtherApps => (max_concurrency / 2).max(1),
-        _ => max_concurrency.max(1),
-    }
-}
+const MAX_WORKERS: usize = 64;
 
 fn find_task(st: &State, id: &str) -> Option<usize> {
     st.tasks.iter().position(|t| t.id == id)
@@ -319,10 +333,55 @@ fn detach_task(st: &mut State, idx: usize) {
 
 // ---------------- engine lifecycle & public API ----------------
 
+fn compute_resource_target(
+    cores: usize,
+    policy: Policy,
+    cpu_pct: f64,
+    mem_avail_pct: f64,
+    per_conn_cost: f64,
+) -> usize {
+    let cores_f = cores.max(1) as f64;
+    let cpu_room = ((100.0 - cpu_pct) / 100.0).clamp(0.0, 1.0);
+    let (scale, idle_factor, mem_fraction) = match policy {
+        Policy::FavorOtherApps => (0.5, 2.0, 0.35),
+        Policy::Balanced => (1.0, 4.0, 0.60),
+        Policy::MaxPerformance => (1.5, 4.0, 0.80),
+    };
+    let cpu_cap = (cores_f * scale * (1.0 + idle_factor * cpu_room)).round() as usize;
+
+    let mem_cap = if mem_avail_pct <= 4.0 {
+        1
+    } else if mem_avail_pct <= 8.0 {
+        (cores / 2).max(1)
+    } else {
+        let avail = crate::win::mem_available_bytes() as f64;
+        if avail > 0.0 {
+            ((avail * mem_fraction) / per_conn_cost).floor() as usize
+        } else {
+            usize::MAX
+        }
+    };
+
+    cpu_cap.min(mem_cap).clamp(1, MAX_WORKERS)
+}
+
 impl Engine {
     pub fn new(opts: Options, sink: Sink) -> Arc<Engine> {
-        let effective = policy_cap(opts.policy, opts.max_concurrency.max(1));
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let effective = compute_resource_target(
+            cores,
+            opts.policy,
+            0.0,
+            100.0,
+            ((opts.io_buffer_size as f64) * 2.0 + 256.0 * 1024.0).max(512.0 * 1024.0),
+        )
+        .min(opts.max_concurrency.max(1).min(MAX_WORKERS))
+        .max(1);
         let now = now_ms();
+        let abort = AbortRegistry::new();
+        let http = HttpShared::new();
         Arc::new(Engine {
             state: Mutex::new(State {
                 tasks: Vec::new(),
@@ -342,6 +401,10 @@ impl Engine {
                 success_count: 0,
                 last_adapt_at: now,
                 last_adapt_speed: 0.0,
+                last_adapt_inflight: 0,
+                split_ok: true,
+                split_off_at: 0,
+                running_jobs: 0,
                 last_stats_at: now,
                 last_progress_at: now,
             }),
@@ -349,14 +412,24 @@ impl Engine {
             sink,
             cv: Condvar::new(),
             tick: Condvar::new(),
-            abort: AbortRegistry::new(),
+            abort,
+            http,
             handles: Mutex::new(Vec::new()),
             workers: Mutex::new(0),
             self_weak: OnceLock::new(),
             stop: AtomicBool::new(false),
             joined: AtomicBool::new(false),
             started: AtomicBool::new(false),
+            cores,
         })
+    }
+
+    fn per_connection_cost_bytes(&self) -> f64 {
+        ((self.opts.io_buffer_size as f64) * 2.0 + 256.0 * 1024.0).max(512.0 * 1024.0)
+    }
+
+    fn resource_target(&self, st: &State) -> usize {
+        compute_resource_target(self.cores, st.policy, st.cpu_pct, st.mem_avail_pct, self.per_connection_cost_bytes())
     }
 
     pub fn start(self: &Arc<Engine>) {
@@ -364,7 +437,7 @@ impl Engine {
             return;
         }
         let mut handles = Vec::new();
-        let worker_count = self.opts.max_concurrency.clamp(1, 2);
+        let worker_count = 1usize;
         for _ in 0..worker_count {
             let me = Arc::clone(self);
             handles.push(thread::spawn(move || me.worker_loop()));
@@ -458,10 +531,8 @@ impl Engine {
         };
         let ev = state_event(&task);
         st.tasks.push(task);
-        let want_workers = st.effective;
         drop(st);
         self.emit(ev);
-        self.ensure_workers(want_workers);
         self.tick.notify_all();
         Ok(id)
     }
@@ -546,14 +617,14 @@ impl Engine {
         let value = n.clamp(1, 256);
         let raised = value > st.max_concurrency;
         st.max_concurrency = value;
-        let cap = policy_cap(st.policy, value);
+        let resource = self.resource_target(&st);
+        let cap = value.min(resource).min(MAX_WORKERS);
         if raised {
             st.effective = cap;
         } else {
             st.effective = st.effective.min(cap).max(1);
         }
         drop(st);
-        self.ensure_workers(value);
         self.tick.notify_all();
     }
 
@@ -561,6 +632,7 @@ impl Engine {
         if !self.started.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst) {
             return;
         }
+        let need = need.clamp(1, MAX_WORKERS);
         let Some(me) = self.self_weak.get().and_then(|w| w.upgrade()) else {
             return;
         };
@@ -589,17 +661,19 @@ impl Engine {
     pub fn set_policy(&self, policy: Policy) {
         let mut st = self.state.lock().unwrap();
         st.policy = policy;
-        st.effective = policy_cap(policy, st.max_concurrency);
-        let want_workers = st.effective;
+        let resource = self.resource_target(&st);
+        st.effective = st.max_concurrency.min(resource).min(MAX_WORKERS);
         drop(st);
-        self.ensure_workers(want_workers);
         self.tick.notify_all();
     }
 
     pub fn shutdown(&self) {
-        self.stop.store(true, Ordering::SeqCst);
+        {
+            let _st = self.state.lock().unwrap();
+            self.stop.store(true, Ordering::SeqCst);
+            self.cv.notify_all();
+        }
         self.abort.abort_all();
-        self.cv.notify_all();
         self.tick.notify_all();
         self.join_threads();
     }

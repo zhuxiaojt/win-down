@@ -21,13 +21,13 @@ new Downloader(options?: DownloaderOptions)
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `maxConcurrency` | `number` | `16` | Global maximum concurrent connections (1–256) |
+| `maxConcurrency` | `number` | `16` | Global maximum concurrent connections (the engine caps the effective value at 64, further limited by CPU/memory and the resource policy) |
 | `maxTasksInFlight` | `number` | `4` | Maximum simultaneously downloading tasks (1–64) |
 | `policy` | `'balanced' \| 'favor-other-apps' \| 'max-performance'` | `'balanced'` | Resource policy, see [Resource policies](#resource-policies) |
-| `segmentSize` | `number` | `8 MiB` | Segment size (bytes) |
+| `segmentSize` | `number` | `8 MiB` | Target segment size in bytes (baseline; see [Segments and concurrency](#segments-and-concurrency)) |
 | `maxSegmentsPerTask` | `number` | `32` | Maximum segments per task (1–1024) |
 | `smallFileThreshold` | `number` | `2 MiB` | Files smaller than this are not segmented and use a single connection |
-| `maxPerHost` | `number` | `6` | Maximum connections per host |
+| `maxPerHost` | `number` | `8` | Maximum connections per host |
 | `connectTimeoutMs` | `number` | `10000` | Connect timeout (ms) |
 | `idleTimeoutMs` | `number` | `30000` | Idle timeout (ms) |
 | `maxRetries` | `number` | `5` | Maximum retry attempts |
@@ -44,6 +44,13 @@ new Downloader(options?: DownloaderOptions)
 | `progressIntervalMs` | `number` | `100` | Progress event interval (minimum 20ms) |
 | `ioBufferSize` | `number` | `512 KiB` | I/O buffer size (64 KiB – 4 MiB) |
 | `createDirectories` | `boolean` | `true` | Automatically create destination directories |
+
+### Segments and concurrency
+
+- `segmentSize` is only a baseline: the segment count is the larger of "split by size" and "available concurrency", then capped by `maxSegmentsPerTask` and divided evenly. A high concurrency target therefore produces segments smaller than `segmentSize`, while very large files capped by `maxSegmentsPerTask` produce segments larger than it.
+- When concurrency becomes idle during a download, the engine keeps splitting the largest remaining segment in half, so `progress.segmentsTotal` may grow while downloading.
+- `maxConcurrency` is only a cap: the engine derives a resource target from CPU, available memory, and `policy`, and uses the smaller value (never above 64). The actual value is `stats.effectiveConcurrency`.
+- HTTP/2 multiplexing is used when both the server and the local system support it (HTTPS only); otherwise the engine falls back to reused HTTP/1.1 connections.
 
 ## Task management
 

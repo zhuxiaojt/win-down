@@ -140,7 +140,7 @@ impl Default for Options {
             segment_size: 8 << 20,
             max_segments_per_task: 32,
             small_file_threshold: 2 << 20,
-            max_per_host: 6,
+            max_per_host: 8,
             connect_timeout_ms: 10_000,
             idle_timeout_ms: 30_000,
             max_retries: 5,

@@ -36,8 +36,17 @@ impl Engine {
             let mem = win::mem_available_pct();
 
             let mut st = self.state.lock().unwrap();
-            st.cpu_pct = cpu.clamp(0.0, 100.0);
-            st.mem_avail_pct = mem;
+            // CPU/内存做轻度平滑，避免单次采样抖动导致并发数每秒来回跳。
+            st.cpu_pct = if st.cpu_pct <= 0.0 {
+                cpu.clamp(0.0, 100.0)
+            } else {
+                st.cpu_pct * 0.6 + cpu.clamp(0.0, 100.0) * 0.4
+            };
+            st.mem_avail_pct = if st.mem_avail_pct >= 100.0 {
+                mem
+            } else {
+                st.mem_avail_pct * 0.6 + mem * 0.4
+            };
             let mut max_latency = 0.0f64;
             for t in &st.tasks {
                 if let Some(sink) = &t.sink {

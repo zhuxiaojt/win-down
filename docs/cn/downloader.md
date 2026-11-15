@@ -21,13 +21,13 @@ new Downloader(options?: DownloaderOptions)
 
 | 选项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `maxConcurrency` | `number` | `16` | 全局最大并发连接数（1–256） |
+| `maxConcurrency` | `number` | `16` | 全局最大并发连接数（引擎实际生效上限 64，且受 CPU/内存与资源策略影响） |
 | `maxTasksInFlight` | `number` | `4` | 最大同时下载任务数（1–64） |
 | `policy` | `'balanced' \| 'favor-other-apps' \| 'max-performance'` | `'balanced'` | 资源策略，见[资源策略](#资源策略) |
-| `segmentSize` | `number` | `8 MiB` | 分片大小（字节） |
+| `segmentSize` | `number` | `8 MiB` | 目标分片大小（字节，基准值；实际分片见[分片与并发](#分片与并发)） |
 | `maxSegmentsPerTask` | `number` | `32` | 每任务最大分片数（1–1024） |
 | `smallFileThreshold` | `number` | `2 MiB` | 小于该值的文件不切片，直接单连接下载 |
-| `maxPerHost` | `number` | `6` | 每主机最大连接数 |
+| `maxPerHost` | `number` | `8` | 每主机最大连接数 |
 | `connectTimeoutMs` | `number` | `10000` | 连接超时（毫秒） |
 | `idleTimeoutMs` | `number` | `30000` | 空闲超时（毫秒） |
 | `maxRetries` | `number` | `5` | 最大重试次数 |
@@ -44,6 +44,13 @@ new Downloader(options?: DownloaderOptions)
 | `progressIntervalMs` | `number` | `100` | 进度事件推送间隔（最小 20ms） |
 | `ioBufferSize` | `number` | `512 KiB` | I/O 缓冲区大小（64 KiB – 4 MiB） |
 | `createDirectories` | `boolean` | `true` | 自动创建目标目录 |
+
+### 分片与并发
+
+- `segmentSize` 只是基准值：实际分片数取“按大小切分”和“可用并发数”的较大者，再受 `maxSegmentsPerTask` 限制后均分。因此并发目标高时单片会小于 `segmentSize`；超大文件被 `maxSegmentsPerTask` 截断时单片会大于它。
+- 下载过程中若出现空闲并发，引擎会把剩余量最大的分片继续对半拆分，`progress.segmentsTotal` 可能在下载中增长。
+- `maxConcurrency` 只是上限：引擎按 CPU、可用内存和 `policy` 推导资源目标，最终并发取两者的较小值，且不超过 64。实际生效值见 `stats.effectiveConcurrency`。
+- 服务端与本地都支持时使用 HTTP/2 多路复用（仅 HTTPS），否则回退到 HTTP/1.1 长连接复用。
 
 ## 任务管理
 

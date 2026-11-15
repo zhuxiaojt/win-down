@@ -25,10 +25,10 @@ await task.wait(); // 完成 → resolve(ProgressEvent)；失败/取消 → reje
 | `expectedSize` | `number` | `-1` | 期望文件大小，下载完成后校验（-1 表示不校验） |
 | `checksum` | `{ algorithm, value }` | - | 完整性校验；`algorithm` 为 `'sha256' \| 'md5' \| 'crc32'`，`value` 为十六进制摘要 |
 | `priority` | `number` | `0` | 队列优先级，数值越大越先调度 |
-| `maxConcurrency` | `number` | 全局值 | 任务级并发连接数覆盖 |
+| `maxConcurrency` | `number` | 全局值 | 任务级并发上限，实际不会超过全局生效并发 |
 | `overwrite` | `'error' \| 'overwrite' \| 'rename' \| 'skip'` | `'error'` | 目标文件已存在时的处理方式 |
 | `resume` | `boolean` | 全局值 | 任务级断点续传开关 |
-| `segmentSize` | `number` | 全局值 | 任务级分片大小覆盖 |
+| `segmentSize` | `number` | 全局值 | 任务级目标分片大小覆盖（基准值，实际分片还受并发目标、`maxSegmentsPerTask` 与运行中动态拆分影响） |
 
 ### overwrite 模式
 
@@ -54,7 +54,7 @@ const task = downloader.addTask({
   expectedSize: 104857600, // 下载完校验实际大小
   checksum: { algorithm: 'sha256', value: 'e3b0c44298fc1c14...' },
   priority: 10,            // 高优先级，先于普通任务调度
-  maxConcurrency: 16,      // 该任务单独放开并发
+  maxConcurrency: 16,      // 该任务最多用 16 条连接，且不超过全局生效并发
   overwrite: 'rename',     // 已存在则重命名
   resume: true,            // 开启断点续传
 });
@@ -91,7 +91,7 @@ console.log(t.skipped); // true（如果文件本来就存在）
 | `speedBps` | `number` | 瞬时速度（B/s） |
 | `etaSeconds` | `number \| null` | 预计剩余时间（秒） |
 | `activeConnections` | `number` | 当前活跃连接数 |
-| `segmentsTotal` / `segmentsCompleted` | `number` | 分片总数 / 已完成分片数 |
+| `segmentsTotal` / `segmentsCompleted` | `number` | 分片总数 / 已完成分片数（`segmentsTotal` 可能因运行中动态拆分而增长） |
 | `degraded` | `boolean` | 是否处于降级模式 |
 | `degradeReason` | `DegradeReason \| null` | 降级原因，见 [errors.md](errors.md) |
 | `checksumVerified` | `boolean \| null` | 校验结果（未配置校验时为 `null`） |

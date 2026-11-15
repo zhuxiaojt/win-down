@@ -87,7 +87,12 @@ pub(super) fn load_meta(
     Some(segs)
 }
 
-pub(super) fn build_segments(total: i64, segment_size: i64, max_segs: usize) -> Vec<Segment> {
+pub(super) fn build_segments(
+    total: i64,
+    segment_size: i64,
+    max_segs: usize,
+    desired: usize,
+) -> Vec<Segment> {
     if total <= 0 {
         return Vec::new();
     }
@@ -98,17 +103,16 @@ pub(super) fn build_segments(total: i64, segment_size: i64, max_segs: usize) -> 
     };
     size = size.max(1);
     let max_segs = max_segs.max(1);
-    loop {
-        let count = ((total + size - 1) / size).max(1) as usize;
-        if count <= max_segs {
-            break;
-        }
-        size *= 2;
-    }
+    let by_size = ((total + size - 1) / size).max(1) as usize;
+    let floor_for_desired = (total / (256 * 1024)).max(1) as usize;
+    let wanted = desired.max(1).min(floor_for_desired);
+    let count = by_size.max(wanted).min(max_segs).max(1);
+    let chunk = ((total + count as i64 - 1) / count as i64).max(1);
+
     let mut segs = Vec::new();
     let mut offset = 0i64;
     while offset < total {
-        let end = (offset + size - 1).min(total - 1);
+        let end = (offset + chunk - 1).min(total - 1);
         segs.push(Segment {
             start: offset,
             end,

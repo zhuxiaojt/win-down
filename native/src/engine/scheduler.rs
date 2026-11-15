@@ -11,10 +11,13 @@ fn host_has_room(map: &HashMap<String, i64>, host: &str, max: i64) -> bool {
     host.is_empty() || map.get(host).copied().unwrap_or(0) < max
 }
 
+const MIN_SPLIT_FLOOR: i64 = 128 * 1024;
+
 // ---------------- scheduler ----------------
 
 impl Engine {
     pub(super) fn scheduler_loop(&self) {
+        let mut spawned_need = 0usize;
         loop {
             let mut st = self.state.lock().unwrap();
             if self.stop.load(Ordering::Relaxed) {
@@ -22,8 +25,15 @@ impl Engine {
             }
             self.process_commands(&mut st);
             self.schedule(&mut st);
+            let demand = (st.jobs.len() + st.running_jobs).min(st.effective);
+            drop(st);
+            if demand > spawned_need {
+                self.ensure_workers(demand);
+                spawned_need = demand;
+            }
+            let st = self.state.lock().unwrap();
             let result = self.tick.wait_timeout(st, Duration::from_millis(20)).unwrap();
-            st = result.0;
+            drop(result.0);
             if self.stop.load(Ordering::Relaxed) {
                 return;
             }
@@ -65,6 +75,7 @@ impl Engine {
                         continue;
                     };
                     let mut events = Vec::new();
+                    let mut reverify: Option<usize> = None;
                     {
                         let t = &mut st.tasks[idx];
                         if t.state.terminal() {
@@ -87,16 +98,30 @@ impl Engine {
                                             s.retry_at = 0;
                                         }
                                     }
+                                    if t.verify_requested && t.segs.iter().all(|s| s.done) {
+                                        t.verify_requested = false;
+                                        reverify = Some(idx);
+                                    }
                                 } else {
                                     t.single_ready = true;
                                     t.single_retry_at = 0;
+                                    t.single_queued = false;
                                 }
                             }
-                            events.push(state_event(t));
+                            if reverify.is_none() {
+                                events.push(state_event(t));
+                            }
                         }
                     }
                     for e in events {
                         self.emit(e);
+                    }
+                    if let Some(vidx) = reverify {
+                        let mut rev_events = Vec::new();
+                        self.begin_verify_locked(st, vidx, &mut rev_events);
+                        for e in rev_events {
+                            self.emit(e);
+                        }
                     }
                     self.emit_done(cmd.token, true, "", "");
                 }
@@ -147,11 +172,13 @@ impl Engine {
                 }
                 CmdKind::ResumeAll => {
                     let mut events = Vec::new();
+                    let mut reverify: Vec<usize> = Vec::new();
                     for idx in 0..st.tasks.len() {
                         let t = &mut st.tasks[idx];
                         if t.state != TaskState::Paused {
                             continue;
                         }
+                        let mut do_reverify = false;
                         if t.sink.is_none() {
                             t.state = TaskState::Queued;
                             t.probe_requested = false;
@@ -167,15 +194,30 @@ impl Engine {
                                         s.retry_at = 0;
                                     }
                                 }
+                                if t.verify_requested && t.segs.iter().all(|s| s.done) {
+                                    t.verify_requested = false;
+                                    reverify.push(idx);
+                                    do_reverify = true;
+                                }
                             } else {
                                 t.single_ready = true;
                                 t.single_retry_at = 0;
+                                t.single_queued = false;
                             }
                         }
-                        events.push(state_event(t));
+                        if !do_reverify {
+                            events.push(state_event(t));
+                        }
                     }
                     for e in events {
                         self.emit(e);
+                    }
+                    for vidx in reverify {
+                        let mut rev_events = Vec::new();
+                        self.begin_verify_locked(st, vidx, &mut rev_events);
+                        for e in rev_events {
+                            self.emit(e);
+                        }
                     }
                     self.emit_done(cmd.token, true, "", "");
                 }
@@ -519,6 +561,44 @@ impl Engine {
             }
         }
 
+        while in_flight < budget {
+            let Some((ti, si)) = self.pick_split_candidate(st, &host_use, max_per_host) else {
+                break;
+            };
+            let gen = st.tasks[ti].generation;
+            let host = st.tasks[ti].host.clone();
+            let new_idx = {
+                let t = &mut st.tasks[ti];
+                let s = &t.segs[si];
+                let rem = (s.end - s.start + 1) - s.written;
+                let keep = rem / 2;
+                let split_at = s.start + s.written + keep;
+                let old_end = s.end;
+                t.segs[si].end = split_at - 1;
+                t.segs.push(Segment {
+                    start: split_at,
+                    end: old_end,
+                    ..Default::default()
+                });
+                t.segs.len() - 1
+            };
+            st.tasks[ti].segs[new_idx].active = true;
+            st.tasks[ti].inflight += 1;
+            if !host.is_empty() {
+                *host_use.entry(host).or_insert(0) += 1;
+            }
+            st.jobs.push_back(Job {
+                kind: JobKind::Segment,
+                task: ti,
+                seg: new_idx,
+                gen,
+                token: 0,
+                url: String::new(),
+            });
+            in_flight += 1;
+            self.cv.notify_one();
+        }
+
         let interval = self.opts.progress_interval_ms.max(20);
         if now - st.last_progress_at >= interval {
             st.last_progress_at = now;
@@ -528,15 +608,10 @@ impl Engine {
                 if t.state.terminal() {
                     continue;
                 }
-                let dt = (now - t.last_progress_at) as f64;
-                if dt > 0.0 {
-                    let delta = (t.session_bytes - t.last_session) as f64;
-                    let inst = delta * 1000.0 / dt;
-                    t.speed = if t.speed <= 0.0 {
-                        inst
-                    } else {
-                        t.speed * 0.7 + inst * 0.3
-                    };
+                let win_dt = now - t.last_progress_at;
+                if win_dt >= 500 {
+                    let delta = (t.session_bytes - t.last_session).max(0) as f64;
+                    t.speed = delta * 1000.0 / win_dt as f64;
                     t.last_session = t.session_bytes;
                     t.last_progress_at = now;
                 }
@@ -555,6 +630,84 @@ impl Engine {
         }
     }
 
+    fn pick_split_candidate(
+        &self,
+        st: &State,
+        host_use: &HashMap<String, i64>,
+        max_per_host: i64,
+    ) -> Option<(usize, usize)> {
+        let max_segs = self.opts.max_segments_per_task.max(1);
+        let mut best: Option<(usize, usize, i64)> = None;
+        for (ti, t) in st.tasks.iter().enumerate() {
+            if t.mode != Mode::Segmented
+                || !matches!(t.state, TaskState::Downloading | TaskState::Retrying)
+                || t.sink.is_none()
+                || t.pause_pending
+                || t.cancel_pending
+                || t.verify_requested
+                || t.segs.len() >= max_segs
+                || !host_has_room(host_use, &t.host, max_per_host)
+            {
+                continue;
+            }
+            let limit = if t.opt.max_concurrency > 0 {
+                t.opt.max_concurrency
+            } else {
+                st.max_concurrency
+            };
+            if t.inflight as usize >= limit {
+                continue;
+            }
+            let alive = t.segs.iter().filter(|s| !s.done).count();
+            if alive >= limit {
+                continue;
+            }
+            if !st.split_ok && alive * 2 > limit {
+                continue;
+            }
+            let per_conn = if t.inflight > 0 {
+                t.speed / t.inflight as f64
+            } else {
+                0.0
+            };
+            let mut best_idle: Option<(usize, usize, i64)> = None;
+            let mut best_running: Option<(usize, usize, i64)> = None;
+            for (si, s) in t.segs.iter().enumerate() {
+                if !s.active || s.done {
+                    continue;
+                }
+                let rem = (s.end - s.start + 1) - s.written;
+                if rem < MIN_SPLIT_FLOOR * 2 {
+                    continue;
+                }
+                if per_conn > 0.0 {
+                    let need = if s.running { 1.0 } else { 0.5 };
+                    if (rem as f64) < per_conn * need {
+                        continue;
+                    }
+                } else if s.running {
+                    continue;
+                } else if rem < MIN_SPLIT_FLOOR * 4 {
+                    continue;
+                }
+                let slot = if s.running {
+                    &mut best_running
+                } else {
+                    &mut best_idle
+                };
+                if slot.map_or(true, |(_, _, r)| rem > r) {
+                    *slot = Some((ti, si, rem));
+                }
+            }
+            if let Some(p) = best_idle.or(best_running) {
+                if best.map_or(true, |(_, _, r)| p.2 > r) {
+                    best = Some(p);
+                }
+            }
+        }
+        best.map(|(ti, si, _)| (ti, si))
+    }
+
     fn update_adaptive(&self, st: &mut State, now: i64) {
         let mut speed_total = 0.0;
         for t in &st.tasks {
@@ -563,31 +716,50 @@ impl Engine {
             }
         }
         let (cpu_hi, mem_lo, lat_hi) = match st.policy {
-            Policy::FavorOtherApps => (60.0, 25.0, 25.0),
-            Policy::MaxPerformance => (98.0, 8.0, 80.0),
-            Policy::Balanced => (85.0, 12.0, 40.0),
+            Policy::FavorOtherApps => (65.0, 20.0, 30.0),
+            Policy::MaxPerformance => (98.0, 6.0, 80.0),
+            Policy::Balanced => (90.0, 10.0, 50.0),
         };
         let saturated = st.cpu_pct > cpu_hi
             || st.mem_avail_pct < mem_lo
             || st.disk_latency_ms > lat_hi
             || st.error_rate() > 0.05;
+
+        let resource = self.resource_target(st);
+        let limit = st.max_concurrency.max(1).min(MAX_WORKERS);
+        let mut want = resource.min(limit);
+
+        let speed_improved = st.last_adapt_speed > 0.0 && speed_total > st.last_adapt_speed * 1.02;
+        let inflight_now = st
+            .tasks
+            .iter()
+            .filter(|t| !t.state.terminal())
+            .map(|t| t.inflight.max(0) as usize)
+            .sum::<usize>();
+        let conn_dropped = st.last_adapt_inflight > inflight_now;
+
         if saturated {
-            st.effective = (st.effective * 3 / 4).max(1);
-        } else if st.last_adapt_speed > 0.0 && speed_total > st.last_adapt_speed * 1.05 {
-            let step = match st.policy {
-                Policy::FavorOtherApps => 1,
-                Policy::Balanced => 2,
-                Policy::MaxPerformance => 4,
-            };
-            st.effective = (st.effective + step).min(policy_cap(st.policy, st.max_concurrency));
-        } else if st.last_adapt_speed > 0.0 && speed_total < st.last_adapt_speed * 0.5 {
-            st.effective = st.effective.saturating_sub(1).max(1);
+            want = (want * 4 / 5).max(1);
+            st.split_ok = false;
+            st.split_off_at = now;
+        } else if speed_improved || conn_dropped {
+            st.split_ok = true;
+        } else if st.last_adapt_speed > 0.0 {
+            if st.split_ok {
+                st.split_off_at = now;
+            }
+            st.split_ok = false;
         }
-        st.effective = st
-            .effective
-            .clamp(1, policy_cap(st.policy, st.max_concurrency));
+        st.effective = want;
+
+        if !st.split_ok && st.split_off_at > 0 && now - st.split_off_at >= 5_000 {
+            st.split_ok = true;
+            st.split_off_at = 0;
+        }
+
         st.last_adapt_at = now;
         st.last_adapt_speed = speed_total;
+        st.last_adapt_inflight = inflight_now;
     }
 }
 

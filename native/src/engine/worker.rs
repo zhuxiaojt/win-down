@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::file::{self, FileSink};
 use crate::http::{host_of, HttpWorker};
@@ -13,7 +12,11 @@ use super::*;
 
 impl Engine {
     pub(super) fn worker_loop(&self) {
-        let mut http = HttpWorker::new(self.opts.clone(), Arc::clone(&self.abort));
+        let mut http = HttpWorker::new(
+            self.opts.clone(),
+            Arc::clone(&self.abort),
+            Arc::clone(&self.http),
+        );
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return;
@@ -31,17 +34,11 @@ impl Engine {
                         return;
                     }
                     if let Some(j) = st.jobs.pop_front() {
-                        break Some(j);
+                        st.running_jobs += 1;
+                        break j;
                     }
-                    let result = self.cv.wait_timeout(st, Duration::from_millis(250)).unwrap();
-                    st = result.0;
-                    if result.1.timed_out() && self.stop.load(Ordering::Relaxed) {
-                        return;
-                    }
+                    st = self.cv.wait(st).unwrap();
                 }
-            };
-            let Some(job) = job else {
-                return;
             };
 
             match job.kind {
@@ -52,10 +49,17 @@ impl Engine {
                 }
                 JobKind::Segment => {
                     if let Some(idx) = self.valid_task(&job) {
-                        if job.seg < {
-                            let st = self.state.lock().unwrap();
-                            st.tasks[idx].segs.len()
-                        } {
+                        let ok = {
+                            let mut st = self.state.lock().unwrap();
+                            match st.tasks[idx].segs.get_mut(job.seg) {
+                                Some(s) if !s.done => {
+                                    s.running = true;
+                                    true
+                                }
+                                _ => false,
+                            }
+                        };
+                        if ok {
                             self.run_segment(idx, job.seg, job.gen, &mut http);
                         }
                     }
@@ -75,13 +79,21 @@ impl Engine {
                 }
             }
 
-            if job.kind != JobKind::StandaloneProbe && job.task != usize::MAX {
+            {
                 let mut st = self.state.lock().unwrap();
-                let t = &mut st.tasks[job.task];
-                if t.inflight > 0 {
-                    t.inflight -= 1;
+                st.running_jobs = st.running_jobs.saturating_sub(1);
+                if job.kind != JobKind::StandaloneProbe && job.task != usize::MAX {
+                    if let Some(t) = st.tasks.get_mut(job.task) {
+                        if job.kind == JobKind::Segment && t.generation == job.gen {
+                            if let Some(s) = t.segs.get_mut(job.seg) {
+                                s.running = false;
+                            }
+                        }
+                        if t.inflight > 0 {
+                            t.inflight -= 1;
+                        }
+                    }
                 }
-                drop(st);
             }
             self.tick.notify_all();
         }
@@ -90,6 +102,9 @@ impl Engine {
     fn valid_task(&self, job: &Job) -> Option<usize> {
         let st = self.state.lock().unwrap();
         if job.task >= st.tasks.len() {
+            return None;
+        }
+        if job.kind != JobKind::StandaloneProbe && st.tasks[job.task].generation != job.gen {
             return None;
         }
         Some(job.task)
@@ -153,6 +168,7 @@ impl Engine {
             } else {
                 st.success_count += 1;
             }
+            let effective_now = st.effective;
             let t = &mut st.tasks[idx];
             if t.cancel_pending || t.pause_pending || t.state == TaskState::Paused {
                 return;
@@ -280,6 +296,10 @@ impl Engine {
                         t.segs.clear();
                         t.next_seg = 0;
                         if mode == Mode::Segmented {
+                            let mut desired = effective_now.min(self.opts.max_per_host.max(1));
+                            if t.opt.max_concurrency > 0 {
+                                desired = desired.min(t.opt.max_concurrency);
+                            }
                             t.segs = build_segments(
                                 total,
                                 if t.opt.segment_size > 0 {
@@ -288,6 +308,7 @@ impl Engine {
                                     self.opts.segment_size
                                 },
                                 self.opts.max_segments_per_task,
+                                desired,
                             );
                         }
                     }
